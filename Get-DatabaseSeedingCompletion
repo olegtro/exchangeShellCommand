@@ -1,0 +1,92 @@
+<#
+    .Synopsis
+        Estimate time of completion for database seeding
+    .Description
+        Using a customizable sample duration of the seeding throughput for a database copy,
+        the script estimates the date and time the seeding will complete.  This does
+        not include the time to seed the content index or copy transaction logs that have
+        been accruing since the seeding started.
+    .Parameter Identity
+        The identity of a database copy, using the format Database\Server.
+    .Parameter SampleDuration
+        The number of seconds (in one-second intervals) to monitor the seeding throughput
+        in order to calculate the completion time.  The default is 60 seconds.
+    .Example
+        Get-DatabaseSeedingCompletion.ps1 -Identity database1\server2
+    .Example
+        Get-DatabaseSeedingCompletion.ps1 -Identity database2\serverA -SampleDuration 360
+    .Notes
+        Version: 1.1
+        Date: 11/22/13
+#>
+param
+    (
+    [parameter(Mandatory=$true,Position=0)][string]$Identity,
+    [parameter(Mandatory=$false,Position=1)][int]$SampleDuration = 60
+    )
+$database = $Identity.Substring(0,$Identity.IndexOf('\'))
+$server = $Identity.Substring($Identity.IndexOf('\') + 1)
+$showProgress = $true
+while ($showProgress -eq $true)
+    {
+    Write-Progress -Activity 'Getting seeding progress percentage...' -Status 'Retrieving'
+    $percentCompleteCounter = Get-Counter -ComputerName $server -Counter "\MSExchange Replica Seeder($database)\Database Seeding Progress %" -ErrorAction 'SilentlyContinue'
+    $showProgress = $false
+    Write-Progress -Activity 'Getting seeding progress percentage...' -Status 'Retrieving' -Completed
+    }
+if (-not($percentCompleteCounter))
+    {
+    Write-Warning -Message "$Identity is not currently being seeded."
+    }
+else
+    {
+    $percentComplete = $percentCompleteCounter.CounterSamples[0].CookedValue
+    
+    #Get seeding throughput
+    $showProgress = $true
+    while ($showProgress -eq $true)
+        {
+        Write-Progress -Activity 'Getting seeding throughput...' -Status "Sampling for $SampleDuration seconds"
+        $kBytesWrittenPerSecondCounter = Get-Counter -ComputerName $server -Counter "MSExchange Replica Seeder($database)\Database Seeding Bytes Written (KB/sec)" -MaxSamples $SampleDuration
+        $showProgress = $false
+        Write-Progress -Activity 'Getting seeding throughput...' -Status 'Sampling' -Completed
+        }
+    $kBytesWrittenPerSecondAverage = $kBytesWrittenPerSecondCounter | ForEach-Object {$_.CounterSamples[0].CookedValue} | Measure-Object -Average | Select-Object -ExpandProperty Average
+    if ($kBytesWrittenPerSecondAverage -eq 0)
+        {
+        Write-Warning -Message 'Cannot estimate completion time because throughput for the sampling period is 0 KB.'
+        }
+    else
+        {
+        #Get bytes written so far
+        $showProgress = $true
+        while ($showProgress -eq $true)
+            {
+            Write-Progress -Activity 'Getting seeding amount written so far...' -Status 'Retrieving'
+            $kBytesWrittenCounter = Get-Counter -ComputerName $server -Counter "MSExchange Replica Seeder($database)\Database Seeding Bytes Written (KB)"
+            $showProgress = $false
+            Write-Progress -Activity 'Getting seeding amount written so far...' -Status 'Retrieving' -Completed
+            }
+        $kBytesWrittenValue = $kBytesWrittenCounter.CounterSamples[0].CookedValue
+        
+        #Get DB size to calculate remaining amount
+        $dbSizeRaw = (Get-MailboxDatabase -Identity $database -Status).DatabaseSize
+        if ($dbSizeRaw.GetType().Name -eq 'ByteQuantifiedSize') #Object type when using EMS
+            {
+            $dbSize = $dbSizeRaw.ToBytes()
+            }
+        else
+            { #Object type when using remoting is string
+            $dbSize = [int64]($dbSizeRaw.Split("(")[1].Split()[0])
+            }
+        $KBRemaining = $dbSize/1KB - $kBytesWrittenValue
+        $estimatedMinutesToCompletion = $KBRemaining/$kBytesWrittenPerSecondAverage/60
+        $completionTime = (Get-Date).AddMinutes($estimatedMinutesToCompletion)
+        $outputObject = "" | Select-Object -Property Identity,PercentComplete,'Throughput(MB/sec)',EstimatedCompletion
+        $outputObject.Identity = $Identity
+        $outputObject.PercentComplete = $percentComplete
+        $outputObject.'Throughput(MB/sec)' = [math]::Round($kBytesWrittenPerSecondAverage/1024,1)
+        $outputObject.EstimatedCompletion = "{0:g}" -f $completionTime
+        $outputObject
+        }
+    }
