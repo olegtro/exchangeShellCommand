@@ -55,18 +55,6 @@ sends an email report to the specified recipient.
 .LINK
 http://exchangeserverpro.com/powershell-script-create-mailbox-size-report-exchange-server-2010
 
-.NOTES
-Written by: Paul Cunningham
-
-Find me on:
-
-* My Blog:	http://paulcunningham.me
-* Twitter:	https://twitter.com/paulcunningham
-* LinkedIn:	http://au.linkedin.com/in/cunninghamp/
-* Github:	https://github.com/cunninghamp
-
-For more Exchange Server tips, tricks and news
-check out Exchange Server Pro.
 
 * Website:	http://exchangeserverpro.com
 * Twitter:	http://twitter.com/exchservpro
